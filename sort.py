@@ -24,6 +24,8 @@ Usage:
 
 from __future__ import annotations
 
+__version__ = "1.1.0"
+
 import argparse
 import json
 import logging
@@ -48,6 +50,8 @@ CACHE_FILE = CACHE_DIR / "show-cache.json"
 LOG_FILE = CACHE_DIR / "sorter.log"
 REPORT_FILE = CACHE_DIR / "last-run.json"
 RUN_LOG = CACHE_DIR / "runs.log"
+# Quiet, moves-only log: one line per completed move, nothing else.
+MOVES_LOG = CACHE_DIR / "moves.log"
 
 TVMAZE_SINGLE = "https://api.tvmaze.com/singlesearch/shows?q={q}"
 BRAVE_SEARCH = "https://api.search.brave.com/res/v1/web/search?q={q}&count=3"
@@ -119,6 +123,13 @@ def parse_filename(name: str) -> tuple[str, int, int] | None:
             break
         cleaned.append(part)
     raw_show = " ".join(cleaned).strip()
+    # Drop a trailing release year ("Line of Duty 2012" -> "Line of Duty").
+    # Trailing-only so we don't strip a year that's part of the title. This
+    # also keeps the cache key stable, so "...2012" and the plain name don't
+    # fragment into two folders. See note in SKILL.md re: same-name series.
+    stripped = re.sub(r"\s+(?:19|20)\d{2}$", "", raw_show).strip()
+    if stripped:
+        raw_show = stripped
     if not raw_show:
         return None
     return raw_show, season, episode
@@ -126,6 +137,17 @@ def parse_filename(name: str) -> tuple[str, int, int] | None:
 
 def strip_leading_article(name: str) -> str:
     return re.sub(r"^(?:the|a)\s+", "", name, flags=re.IGNORECASE).strip()
+
+
+def title_case(name: str) -> str:
+    # Force consistent Title Casing so case-sensitive Linux can't end up with
+    # both "Line of Duty" and "Line Of Duty" as separate folders. Apostrophe-
+    # safe: "Bob's Burgers" stays "Bob's Burgers", not "Bob'S Burgers".
+    return re.sub(
+        r"[A-Za-z][A-Za-z']*",
+        lambda m: m.group(0)[:1].upper() + m.group(0)[1:].lower(),
+        name,
+    )
 
 
 def sanitize_for_fs(name: str) -> str:
@@ -196,7 +218,7 @@ def canonical_show_name(raw_show: str, cache: dict, keep_articles: bool = False)
 
     if not keep_articles:
         name = strip_leading_article(name)
-    folder = sanitize_for_fs(name)
+    folder = sanitize_for_fs(title_case(name))
     cache[key] = {"name": folder, "source": source}
     save_cache(cache)
     time.sleep(0.2)
@@ -206,10 +228,29 @@ def canonical_show_name(raw_show: str, cache: dict, keep_articles: bool = False)
 # ---------- Filesystem ----------
 
 def iter_video_files(root: Path):
+    # Never treat the destination library as an input source. If Downloads ever
+    # contains (or symlinks to) something under DEST_ROOT, re-scanning it would
+    # MOVE already-sorted episodes into freshly-derived folders — which looks
+    # exactly like a file being "deleted" from where you expected it.
+    try:
+        dest_root_resolved = DEST_ROOT.resolve()
+    except OSError:
+        dest_root_resolved = DEST_ROOT
     for path in root.rglob("*"):
+        # Don't follow symlinks — a symlinked file or directory can lead the
+        # scan out of Downloads and into the library.
+        if path.is_symlink():
+            continue
         if not path.is_file():
             continue
         if path.suffix.lower() not in VIDEO_EXTS:
+            continue
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved == dest_root_resolved or dest_root_resolved in resolved.parents:
+            logging.debug("Skip (already under destination root): %s", path)
             continue
         # Skip hidden / partial download files.
         if path.name.startswith("."):
@@ -231,9 +272,23 @@ def iter_video_files(root: Path):
 
 
 def move_file(src: Path, dest: Path) -> None:
+    # Refuse to overwrite. shutil.move() silently clobbers an existing file
+    # (os.rename same-fs, copy2 cross-fs), so without this a bug upstream could
+    # destroy a good episode already in the library. Raising instead lets the
+    # per-file try/except record it as a failure rather than lose data.
+    if dest.exists():
+        raise FileExistsError(f"destination already exists: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     # shutil.move handles cross-filesystem renames (Downloads → /Storage).
     shutil.move(str(src), str(dest))
+
+
+def log_move(src: Path, dest: Path) -> None:
+    """Append one line per completed move to the quiet moves-only log."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    with MOVES_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(f"{ts}\t{src}\t{dest}\n")
 
 
 def plan_destination(
@@ -311,6 +366,7 @@ def main() -> int:
             move_file(src, dest)
             moved += 1
             moves.append({"src": str(src), "dest": str(dest), "source": source})
+            log_move(src, dest)
             logging.info("Moved: %s", dest)
         except Exception as exc:
             logging.exception("Failed on %s: %s", src, exc)
