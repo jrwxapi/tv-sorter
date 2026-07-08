@@ -45,6 +45,7 @@ TVmaze, and copies the file to:
 - `sort.py` — the worker script.
 - `run.sh` — wrapper that handles logging + lockfile.
 - `test_smoke.py` — end-to-end smoke test.
+- `hooks/pre-push` — git hook that runs the smoke test before every push.
 
 ## Testing
 
@@ -58,6 +59,15 @@ It drives the real `main()` against throwaway temp directories (dry-run,
 real-move, and in-flight-download-skip cases) so runtime errors surface here
 instead of in the nightly cron. It runs fully offline — the show-name cache is
 pre-seeded, so there are no TVmaze/Brave network calls.
+
+A `pre-push` hook runs this test automatically and aborts the push if it fails.
+It's version-controlled in `hooks/`, so enable it once per clone with:
+
+```bash
+git config core.hooksPath hooks
+```
+
+Bypass in an emergency with `git push --no-verify`.
 
 ## Scheduling
 

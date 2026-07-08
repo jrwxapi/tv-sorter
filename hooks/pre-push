@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Block the push if the tv-sorter smoke test fails.
+# Enabled via: git config core.hooksPath hooks   (see SKILL.md "Testing").
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+echo "pre-push: running tv-sorter smoke test..."
+if ! output="$(python3 "$repo_root/test_smoke.py" 2>&1)"; then
+  echo "$output" >&2
+  echo "pre-push: smoke test FAILED — push aborted. Fix it or use --no-verify." >&2
+  exit 1
+fi
+echo "pre-push: smoke test passed."
