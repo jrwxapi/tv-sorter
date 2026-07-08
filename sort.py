@@ -24,7 +24,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 import argparse
 import json
@@ -227,15 +227,15 @@ def canonical_show_name(raw_show: str, cache: dict, keep_articles: bool = False)
 
 # ---------- Filesystem ----------
 
-def iter_video_files(root: Path):
+def iter_video_files(root: Path, dest_root: Path):
     # Never treat the destination library as an input source. If Downloads ever
-    # contains (or symlinks to) something under DEST_ROOT, re-scanning it would
+    # contains (or symlinks to) something under dest_root, re-scanning it would
     # MOVE already-sorted episodes into freshly-derived folders — which looks
     # exactly like a file being "deleted" from where you expected it.
     try:
-        dest_root_resolved = DEST_ROOT.resolve()
+        dest_root_resolved = dest_root.resolve()
     except OSError:
-        dest_root_resolved = DEST_ROOT
+        dest_root_resolved = dest_root
     for path in root.rglob("*"):
         # Don't follow symlinks — a symlinked file or directory can lead the
         # scan out of Downloads and into the library.
@@ -347,7 +347,7 @@ def main() -> int:
     failures: list[dict] = []
     moves: list[dict] = []
 
-    for src in iter_video_files(args.source):
+    for src in iter_video_files(args.source, args.dest):
         seen += 1
         try:
             plan = plan_destination(src, cache, args.dest, args.keep_articles)
