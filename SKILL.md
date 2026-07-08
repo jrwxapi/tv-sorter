@@ -44,6 +44,20 @@ TVmaze, and copies the file to:
 
 - `sort.py` — the worker script.
 - `run.sh` — wrapper that handles logging + lockfile.
+- `test_smoke.py` — end-to-end smoke test.
+
+## Testing
+
+Before committing changes to `sort.py`, run the smoke test:
+
+```bash
+python3 ~/Projects/skills/tv-sorter/test_smoke.py
+```
+
+It drives the real `main()` against throwaway temp directories (dry-run,
+real-move, and in-flight-download-skip cases) so runtime errors surface here
+instead of in the nightly cron. It runs fully offline — the show-name cache is
+pre-seeded, so there are no TVmaze/Brave network calls.
 
 ## Scheduling
 
