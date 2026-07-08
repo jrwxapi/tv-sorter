@@ -1,6 +1,6 @@
 # TV Sorter
 
-_Version 1.1.1_
+_Version 1.1.2_
 
 Scans `~/Downloads` for TV episode files (`.mkv`, `.avi`, `.mp4`), figures out
 show + season + episode from the filename, confirms the show name against

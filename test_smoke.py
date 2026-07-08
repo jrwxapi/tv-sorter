@@ -102,6 +102,16 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(len(moves_log), 1)
         self.assertIn(str(self.dest / EXPECTED_REL), moves_log[0])
 
+    def test_dirty_cache_entry_is_reformatted(self) -> None:
+        # A legacy cache entry stored a badly-formatted name (lowercase "of",
+        # trailing year). A cache hit must still produce a clean folder name.
+        sort.CACHE_FILE.write_text(json.dumps(
+            {"the wire": {"name": "the wire 2002", "source": "brave"}}))
+        self._make_video(SAMPLE, age_seconds=3600)
+        self._run()
+        self.assertTrue((self.dest / EXPECTED_REL).exists(),
+                        "stale cache value should be re-normalized to Wire")
+
     def test_recent_file_skipped(self) -> None:
         # Modified just now — treated as a possibly-still-downloading file.
         self._make_video(SAMPLE, age_seconds=60)

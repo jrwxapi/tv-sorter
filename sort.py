@@ -24,7 +24,7 @@ Usage:
 
 from __future__ import annotations
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 import argparse
 import json
@@ -107,6 +107,17 @@ def normalize_token(s: str) -> str:
     return re.sub(r"[._\-\s]+", " ", s).strip()
 
 
+# Trailing release year, optionally wrapped in () or []: "Line of Duty 2012",
+# "Line of Duty (2012)", "Line of Duty [2012]".
+YEAR_SUFFIX = re.compile(r"[\s._-]*[(\[]?\s*(?:19|20)\d{2}\s*[)\]]?\s*$")
+
+
+def strip_year_suffix(name: str) -> str:
+    stripped = YEAR_SUFFIX.sub("", name).strip()
+    # Guard against a title that is *only* a year (e.g. the show "2012").
+    return stripped or name
+
+
 def parse_filename(name: str) -> tuple[str, int, int] | None:
     stem = Path(name).stem
     match = SXXEYY.search(stem)
@@ -123,13 +134,11 @@ def parse_filename(name: str) -> tuple[str, int, int] | None:
             break
         cleaned.append(part)
     raw_show = " ".join(cleaned).strip()
-    # Drop a trailing release year ("Line of Duty 2012" -> "Line of Duty").
+    # Drop a trailing release year ("Line of Duty (2012)" -> "Line of Duty").
     # Trailing-only so we don't strip a year that's part of the title. This
     # also keeps the cache key stable, so "...2012" and the plain name don't
     # fragment into two folders. See note in SKILL.md re: same-name series.
-    stripped = re.sub(r"\s+(?:19|20)\d{2}$", "", raw_show).strip()
-    if stripped:
-        raw_show = stripped
+    raw_show = strip_year_suffix(raw_show)
     if not raw_show:
         return None
     return raw_show, season, episode
@@ -156,6 +165,18 @@ def sanitize_for_fs(name: str) -> str:
     # left behind (e.g. "Law & Order" -> "Law Order").
     no_punct = re.sub(r"[^\w\s-]|_", "", name)
     return re.sub(r"\s+", " ", no_punct).strip()
+
+
+def format_folder_name(name: str, keep_articles: bool = False) -> str:
+    """Turn any show name into the final on-disk folder name.
+
+    Applied on EVERY resolution — cache hit or miss — so casing/year fixes reach
+    legacy cache entries too (they were stored pre-normalization). Idempotent:
+    re-formatting an already-clean name is a no-op.
+    """
+    if not keep_articles:
+        name = strip_leading_article(name)
+    return sanitize_for_fs(title_case(strip_year_suffix(name)))
 
 
 # ---------- Show-name confirmation ----------
@@ -201,11 +222,17 @@ def brave_lookup(query: str) -> str | None:
 
 
 def canonical_show_name(raw_show: str, cache: dict, keep_articles: bool = False) -> tuple[str, str]:
-    """Return (folder_name, source)."""
+    """Return (folder_name, source).
+
+    The cache stores the resolved show name as returned by the lookup source;
+    folder formatting (year strip, article strip, Title Case, sanitize) is
+    applied fresh every call via format_folder_name(). That way a cache hit
+    never returns a stale, badly-formatted folder name.
+    """
     key = raw_show.lower()
     cached = cache.get(key)
     if isinstance(cached, dict) and cached.get("name"):
-        return cached["name"], cached.get("source", "cache")
+        return format_folder_name(cached["name"], keep_articles), cached.get("source", "cache")
     # Legacy cache entries were plain strings; ignore and refresh.
 
     name = tvmaze_lookup(raw_show)
@@ -214,15 +241,13 @@ def canonical_show_name(raw_show: str, cache: dict, keep_articles: bool = False)
         name = brave_lookup(raw_show)
         source = "brave" if name else "raw"
     if not name:
-        name = raw_show.title()
+        name = raw_show
+        source = "raw"
 
-    if not keep_articles:
-        name = strip_leading_article(name)
-    folder = sanitize_for_fs(title_case(name))
-    cache[key] = {"name": folder, "source": source}
+    cache[key] = {"name": name, "source": source}
     save_cache(cache)
     time.sleep(0.2)
-    return folder, source
+    return format_folder_name(name, keep_articles), source
 
 
 # ---------- Filesystem ----------
